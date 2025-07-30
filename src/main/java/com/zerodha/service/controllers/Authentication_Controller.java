@@ -27,13 +27,11 @@ public class Authentication_Controller {
 
     private static final Logger logger = LoggerFactory.getLogger(Authentication_Controller.class);
     private final KiteUtility kiteUtility;
-    private String loginUrl;
-
 
     @Autowired
     public Authentication_Controller(KiteUtility kiteUtility){
         this.kiteUtility = kiteUtility;
-        this.logger.info("Authentication initialized.");
+        logger.info("Authentication initialized.");
     }
 
     @GetMapping("/login")
@@ -44,10 +42,10 @@ public class Authentication_Controller {
             kiteSdk.setUserId(clientId);
             logger.info("userId is set in kiteSdk");
 
-            this.loginUrl = kiteSdk.getLoginURL();
+            String loginUrl = kiteSdk.getLoginURL();
             logger.info("Login URL retrieved: {}", loginUrl);
 
-            return CompletableFuture.completedFuture(ResponseEntity.ok("Login successful for user: " + this.loginUrl));
+            return CompletableFuture.completedFuture(ResponseEntity.ok("Login successful for user"));
         }
         catch (Exception ex) {
             logger.error("Unexpected error: {}", ex.getMessage());

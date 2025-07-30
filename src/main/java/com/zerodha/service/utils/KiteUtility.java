@@ -17,9 +17,9 @@ public class KiteUtility {
 
     private static final Logger logger = LoggerFactory.getLogger(KiteUtility.class);
 
-    @PostConstruct
+    @PostConstruct   //executed once after the bean's dependencies have been injected, but before the bean is put into service
     public void init(){
-        logger.info("Initializing KiteConnect with apiKey: {}", apiKey);
+        logger.info("Initializing KiteConnect with apiKey");
         kiteSdk = new KiteConnect(apiKey);
         logger.info("KiteConnect initialized");
     }
