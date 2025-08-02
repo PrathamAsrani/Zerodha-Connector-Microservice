@@ -19,10 +19,12 @@ import java.util.Map;
 @Service
 public class ZerodhaInvestService {
     private final KiteUtility kiteUtility;
+    private OrderService orderService;
     private Logger logger= LoggerFactory.getLogger(ZerodhaInvestService.class);
 
-    public ZerodhaInvestService(KiteUtility kiteUtility) {
+    public ZerodhaInvestService(KiteUtility kiteUtility , OrderService orderService) {
         this.kiteUtility = kiteUtility;
+        this.orderService=orderService;
     }
 
     public ResponseEntity<Object> placeOrder(OrderRequestDto orderRequestDto){
@@ -52,8 +54,15 @@ public class ZerodhaInvestService {
 
             logger.info("Params set, Creating order.");
             Order order = kiteSdk.placeOrder(orderParams , orderRequestDto.variety.getCode());
-
             logger.info("Order Placed!");
+
+            boolean result = orderService.saveOrder(orderRequestDto , order.orderId);
+
+            if(result)
+                logger.info("Order saved in DB");
+            else
+                logger.info("Failed to save in DB");
+
             return ResponseEntity.ok(new OrderResponseDto(order.orderId));
         }
        catch (IOException ex) {

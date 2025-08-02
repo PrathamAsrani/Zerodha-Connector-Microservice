@@ -1,7 +1,9 @@
 package com.zerodha.service.model.dtos;
 
 import com.zerodha.service.enums.*;
+import lombok.Getter;
 
+@Getter
 public class OrderRequestDto {
     public String tradingsymbol;
     public ExchangeEnum exchange;
