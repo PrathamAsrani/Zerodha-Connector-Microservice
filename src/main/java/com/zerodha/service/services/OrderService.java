@@ -3,9 +3,13 @@ package com.zerodha.service.services;
 import com.zerodha.service.model.OrderEntity;
 import com.zerodha.service.model.dtos.OrderRequestDto;
 import com.zerodha.service.repository.OrderRepo;
+import com.zerodha.service.utils.KiteUtility;
+import com.zerodhatech.kiteconnect.KiteConnect;
+import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -14,8 +18,30 @@ import java.time.Instant;
 public class OrderService {
     private OrderRepo orderRepo;
     private Logger logger= LoggerFactory.getLogger(OrderService.class);
-    public  OrderService(OrderRepo orderRepo){
+    private final KiteUtility kiteUtility;
+    public  OrderService(OrderRepo orderRepo, KiteUtility kiteUtility){
         this.orderRepo=orderRepo;
+        this.kiteUtility = kiteUtility;
+    }
+
+    public ResponseEntity<Object> getOrders(){
+        try{
+            KiteConnect kiteSdk = kiteUtility.getKiteSdk();
+
+            // Make sure the access token is already set from the login process
+            logger.info("Fetching orders for user...");
+
+            // Get all orders
+            return ResponseEntity.ok(kiteSdk.getOrders());
+        }
+        catch(KiteException ex)
+        {
+            logger.error("Unexcpected error while fetching the orders" + ex.getMessage());
+        }
+        catch(Exception ex){
+            logger.error("Unexcpected error while fetching the orders" + ex.getMessage());
+        }
+        return null;
     }
 
     public boolean saveOrder(OrderRequestDto orderRequestDto , String orderId){

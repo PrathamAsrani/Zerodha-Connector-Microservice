@@ -1,8 +1,12 @@
 package com.zerodha.service.model.dtos;
 
 import com.zerodha.service.enums.*;
+import lombok.AllArgsConstructor;
+import lombok.Data;
 import lombok.Getter;
 
+@Data
+@AllArgsConstructor
 @Getter
 public class OrderRequestDto {
     public String tradingsymbol;

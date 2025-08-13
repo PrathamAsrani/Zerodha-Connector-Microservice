@@ -1,12 +1,15 @@
 package com.zerodha.service.services;
 
+import com.zerodha.service.enums.MarginSegmentEnum;
 import com.zerodha.service.model.dtos.OrderRequestDto;
 import com.zerodha.service.model.dtos.OrderResponseDto;
 import com.zerodha.service.utils.KiteUtility;
 import com.zerodhatech.kiteconnect.KiteConnect;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
+import com.zerodhatech.models.Margin;
 import com.zerodhatech.models.Order;
 import com.zerodhatech.models.OrderParams;
+import org.apache.coyote.BadRequestException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -20,14 +23,16 @@ import java.util.Map;
 public class ZerodhaInvestService {
     private final KiteUtility kiteUtility;
     private OrderService orderService;
+    private ZerodhaUserService userService;
     private Logger logger= LoggerFactory.getLogger(ZerodhaInvestService.class);
 
-    public ZerodhaInvestService(KiteUtility kiteUtility , OrderService orderService) {
+    public ZerodhaInvestService(KiteUtility kiteUtility , OrderService orderService, ZerodhaUserService zerodhaUserService) {
         this.kiteUtility = kiteUtility;
         this.orderService=orderService;
+        this.userService = zerodhaUserService;
     }
 
-    public ResponseEntity<Object> placeOrder(OrderRequestDto orderRequestDto){
+    public ResponseEntity<OrderResponseDto> placeOrder(OrderRequestDto orderRequestDto){
         logger.info("Placing order.");
         try{
             KiteConnect kiteSdk = kiteUtility.getKiteSdk();
@@ -55,7 +60,10 @@ public class ZerodhaInvestService {
             logger.info("Params set, Creating order.");
             Order order = kiteSdk.placeOrder(orderParams , orderRequestDto.variety.getCode());
             logger.info("Order Placed!");
+            logger.info("order: " + order.toString());
 
+
+            orderRequestDto.price = Double.parseDouble(order.averagePrice);
             boolean result = orderService.saveOrder(orderRequestDto , order.orderId);
 
             if(result)
@@ -66,16 +74,19 @@ public class ZerodhaInvestService {
             return ResponseEntity.ok(new OrderResponseDto(order.orderId));
         }
        catch (IOException ex) {
-            logger.error("IOException caught");
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error" , ex.getMessage()));
+           logger.error("IOException caught");
+           return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                   .body(null);
         }
         catch (KiteException ex) {
             logger.error("KiteException caught");
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error" , ex.getMessage()));
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(null);
         }
         catch (Exception ex){
             logger.error("Exception caught");
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error" , ex.getMessage()));
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(null);
         }
     }
 }
