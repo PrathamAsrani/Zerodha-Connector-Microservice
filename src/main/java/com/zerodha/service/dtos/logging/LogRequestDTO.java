@@ -1,9 +1,7 @@
-package com.zerodha.service.model.dtos;
+package com.zerodha.service.dtos.logging;
 
 import com.zerodha.service.enums.LogEnum;
-import lombok.AllArgsConstructor;
 import lombok.Data;
-import lombok.NoArgsConstructor;
 
 @Data
 public class LogRequestDTO {
