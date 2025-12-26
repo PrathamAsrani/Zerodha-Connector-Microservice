@@ -1,4 +1,4 @@
-package com.zerodha.service.model.dtos;
+package com.zerodha.service.dtos.order;
 
 import com.zerodha.service.enums.*;
 import lombok.AllArgsConstructor;

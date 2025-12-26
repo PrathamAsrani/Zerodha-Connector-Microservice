@@ -1,8 +1,8 @@
 package com.zerodha.service.services;
 
 import com.zerodha.service.enums.LogEnum;
-import com.zerodha.service.model.dtos.LogPayLoadDTO;
-import com.zerodha.service.model.dtos.LogRequestDTO;
+import com.zerodha.service.dtos.logging.LogPayLoadDTO;
+import com.zerodha.service.dtos.logging.LogRequestDTO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,7 +17,7 @@ public class LogService {
 
     private final Logger logger = LoggerFactory.getLogger(LogService.class);
 
-    public LogService(WebClient.Builder builder , @Value("${LOGGER_BASE_URI}")String baseUri){
+    public LogService(WebClient.Builder builder , @Value("${LOGGER_BASE_URI:https://microservice-logger-springboot.onrender.com/}")String baseUri){
         this.webClient = builder.baseUrl(baseUri).build();
     }
 

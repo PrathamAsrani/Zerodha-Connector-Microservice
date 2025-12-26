@@ -1,7 +1,7 @@
 package com.zerodha.service.services;
 
 import com.zerodha.service.model.OrderEntity;
-import com.zerodha.service.model.dtos.OrderRequestDto;
+import com.zerodha.service.dtos.order.OrderRequestDto;
 import com.zerodha.service.repository.OrderRepo;
 import com.zerodha.service.utils.KiteUtility;
 import com.zerodhatech.kiteconnect.KiteConnect;
