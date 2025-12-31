@@ -39,9 +39,8 @@ import static com.zerodha.service.constants.MarketConstants.IS_MARKET_OPEN;
 @Service
 public class ZerodhaInvestService {
     private final KiteUtility kiteUtility;
-    private OrderService orderService;
-    private final ZerodhaAuthService authService;
-    private Logger logger= LoggerFactory.getLogger(ZerodhaInvestService.class);
+    private final OrderService orderService;
+    private final Logger logger = LoggerFactory.getLogger(ZerodhaInvestService.class);
 
     // Cache for instruments to avoid repeated API calls
     private List<Instrument> instrumentsCache;
@@ -56,17 +55,24 @@ public class ZerodhaInvestService {
                     .body(new OrderResponseDto("Market is closed"));
         }
         try{
-            KiteConnect kiteSdk = kiteUtility.getKiteSdk();
-            logger.info("KiteSdk got");
+            // Check if authenticated
+            if (!kiteUtility.hasTokens()) {
+                logger.error("Not authenticated. Please login first.");
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                        .body(new OrderResponseDto("Not authenticated. Please login first."));
+            }
 
-            OrderParams orderParams = getOrderParams(orderRequestDto); 
+            KiteConnect kiteSdk = kiteUtility.getKiteSdk();
+            logger.info("KiteSdk got with tokens");
+
+            OrderParams orderParams = getOrderParams(orderRequestDto);
             logger.info("Params set, Creating order.");
-            Order order = kiteSdk.placeOrder(orderParams , orderRequestDto.variety.getCode());
+            Order order = kiteSdk.placeOrder(orderParams, orderRequestDto.variety.getCode());
             logger.info("Order Placed!");
             logger.info("order: " + order.toString());
 
             orderRequestDto.price = Double.parseDouble(order.averagePrice);
-            boolean result = orderService.saveOrder(orderRequestDto , order.orderId);
+            boolean result = orderService.saveOrder(orderRequestDto, order.orderId);
 
             if(result)
                 logger.info("Order saved in DB");
@@ -75,24 +81,20 @@ public class ZerodhaInvestService {
 
             return ResponseEntity.ok(new OrderResponseDto(order.orderId));
         }
-       catch (IOException ex) {
-           logger.error("IOException caught", ex);
-           return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                   .body(null);
+        catch (IOException ex) {
+            logger.error("IOException caught", ex);
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
         }
         catch (KiteException ex) {
             logger.error("KiteException caught", ex);
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(null);
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
         }
         catch (Exception ex){
             logger.error("Exception caught", ex);
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(null);
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
         }
     }
 
-    // helpers
     private OrderParams getOrderParams(OrderRequestDto orderRequestDto){
         OrderParams orderParams = new OrderParams();
         logger.info("Setting params");
@@ -103,25 +105,26 @@ public class ZerodhaInvestService {
         orderParams.quantity = orderRequestDto.quantity;
         orderParams.orderType = orderRequestDto.orderType.getCode();
         orderParams.tradingsymbol = orderRequestDto.tradingsymbol;
-        orderParams.product =  orderRequestDto.product.getCode();
+        orderParams.product = orderRequestDto.product.getCode();
         orderParams.exchange = orderRequestDto.exchange.getCode();
         orderParams.transactionType = orderRequestDto.transactionType.getCode();
         orderParams.validity = orderRequestDto.validity.getCode();
         orderParams.tag = orderRequestDto.tag;
-        orderParams.disclosedQuantity=orderRequestDto.disclosedQuantity;
-        orderParams.squareoff=orderRequestDto.squareoffValue;
-        orderParams.stoploss=orderRequestDto.stoplossValue;
-        orderParams.trailingStoploss=orderRequestDto.trailingStoploss;
+        orderParams.disclosedQuantity = orderRequestDto.disclosedQuantity;
+        orderParams.squareoff = orderRequestDto.squareoffValue;
+        orderParams.stoploss = orderRequestDto.stoplossValue;
+        orderParams.trailingStoploss = orderRequestDto.trailingStoploss;
+
         logger.info(
-        "FINAL ORDER => exchange={}, symbol={}, txn={}, qty={}, type={}, product={}, price={}, trigger={}",
-            orderParams.exchange,
-            orderParams.tradingsymbol,
-            orderParams.transactionType,
-            orderParams.quantity,
-            orderParams.orderType,
-            orderParams.product,
-            orderParams.price,
-            orderParams.triggerPrice
+                "FINAL ORDER => exchange={}, symbol={}, txn={}, qty={}, type={}, product={}, price={}, trigger={}",
+                orderParams.exchange,
+                orderParams.tradingsymbol,
+                orderParams.transactionType,
+                orderParams.quantity,
+                orderParams.orderType,
+                orderParams.product,
+                orderParams.price,
+                orderParams.triggerPrice
         );
         return orderParams;
     }
@@ -131,8 +134,18 @@ public class ZerodhaInvestService {
                 request.getTradingSymbol(), request.getExchange(), request.getFromDate(), request.getToDate());
 
         try {
-            // Get authenticated KiteConnect instance
+            // Check if authenticated
+            if (!kiteUtility.hasTokens()) {
+                logger.error("Not authenticated. Please login first.");
+                return HistoricalDataResponseDto.builder()
+                        .success(false)
+                        .message("Not authenticated. Please login first at /auth/login")
+                        .build();
+            }
+
+            // ⭐ Now getKiteSdk() returns instance with tokens already set
             KiteConnect kiteSdk = kiteUtility.getKiteSdk();
+            logger.info("Using KiteConnect instance with authenticated tokens");
 
             // Get instrument token if not provided
             String instrumentToken = request.getInstrumentToken();
@@ -196,6 +209,14 @@ public class ZerodhaInvestService {
 
         } catch (KiteException e) {
             logger.error("KiteException while fetching historical data: {}", e.getMessage(), e);
+
+            if (e instanceof com.zerodhatech.kiteconnect.kitehttp.exceptions.PermissionException) {
+                return HistoricalDataResponseDto.builder()
+                        .success(false)
+                        .message("Authentication error: Token expired or invalid. Please login again.")
+                        .build();
+            }
+
             return HistoricalDataResponseDto.builder()
                     .success(false)
                     .message("Zerodha API error: " + e.getMessage())
@@ -215,13 +236,16 @@ public class ZerodhaInvestService {
         }
     }
 
+    // Rest of the methods remain the same...
+    // (findInstrument, searchInstruments, getInstruments, clearInstrumentsCache,
+    //  getSwingTradingData, getLatestCandle, convertToCandles)
+
     public InstrumentInfoDto findInstrument(String tradingSymbol, ExchangeEnum exchange) {
         logger.info("Searching for instrument: {}, exchange: {}", tradingSymbol, exchange);
 
         try {
             List<Instrument> instruments = getInstruments();
 
-            // Search for exact match first
             Optional<Instrument> instrumentOpt = instruments.stream()
                     .filter(i -> i.tradingsymbol.equalsIgnoreCase(tradingSymbol))
                     .filter(i -> exchange == null || i.exchange.equalsIgnoreCase(String.valueOf(exchange)))
@@ -274,7 +298,7 @@ public class ZerodhaInvestService {
                             .lastPrice(instrument.last_price)
                             .expiry(instrument.expiry != null ?
                                     instrument.expiry.toInstant().atZone(ZoneId.systemDefault()).toLocalDate() : null)
-                            .strike(Double.valueOf(instrument.strike))
+                            .strike(instrument.strike != null ? Double.valueOf(instrument.strike) : null)
                             .tickSize(instrument.tick_size)
                             .lotSize(instrument.lot_size)
                             .instrumentType(instrument.instrument_type)
@@ -292,7 +316,6 @@ public class ZerodhaInvestService {
     }
 
     private List<Instrument> getInstruments() throws KiteException, IOException {
-        // Check cache validity
         if (instrumentsCache != null && instrumentsCacheTime != null) {
             long hoursSinceCache = java.time.Duration.between(instrumentsCacheTime, LocalDateTime.now()).toHours();
             if (hoursSinceCache < CACHE_VALIDITY_HOURS) {
@@ -329,7 +352,7 @@ public class ZerodhaInvestService {
                 .fromDate(fromDate)
                 .toDate(toDate)
                 .interval("day")
-                .continuous(true) // Adjusted for splits & bonuses
+                .continuous(true)
                 .oi(false)
                 .build();
 
@@ -355,15 +378,18 @@ public class ZerodhaInvestService {
         }
 
         return historicalData.dataArrayList.stream()
-                .map(candle -> CandleData.builder()
-                        .timestamp(candle.timeStamp != null ? OffsetDateTime.parse(candle.timeStamp).atZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime() : null)
-                        .open(candle.open)
-                        .high(candle.high)
-                        .low(candle.low)
-                        .close(candle.close)
-                        .volume(candle.volume)
-                        .openInterest(candle.oi)
-                        .build())
+                .map(candle -> {
+                    LocalDateTime timestamp = null;
+                    if (candle.timeStamp != null) {
+                        try {
+                            timestamp = OffsetDateTime.parse(candle.timeStamp).atZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime();
+                        } catch (Exception e) {
+                            logger.warn("Failed to parse timestamp: {}", candle.timeStamp, e);
+                        }
+                    }
+
+                    return CandleData.builder().timestamp(timestamp).open(candle.open).high(candle.high).low(candle.low).close(candle.close).volume(candle.volume).openInterest(candle.oi).build();
+                })
                 .collect(Collectors.toList());
     }
 }
