@@ -1,16 +1,20 @@
 package com.zerodha.service.services;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.gson.Gson;
 import com.zerodha.service.dtos.historical_data.CandleData;
 import com.zerodha.service.dtos.historical_data.HistoricalDataRequestDto;
 import com.zerodha.service.dtos.historical_data.HistoricalDataResponseDto;
 import com.zerodha.service.dtos.historical_data.InstrumentInfoDto;
 import com.zerodha.service.dtos.order.OrderRequestDto;
 import com.zerodha.service.dtos.order.OrderResponseDto;
+import com.zerodha.service.dtos.portfolio.HoldingDto;
 import com.zerodha.service.enums.ExchangeEnum;
 import com.zerodha.service.utils.KiteUtility;
 import com.zerodhatech.kiteconnect.KiteConnect;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.HistoricalData;
+import com.zerodhatech.models.Holding;
 import com.zerodhatech.models.Instrument;
 import com.zerodhatech.models.Order;
 import com.zerodhatech.models.OrderParams;
@@ -127,6 +131,46 @@ public class ZerodhaInvestService {
                 orderParams.triggerPrice
         );
         return orderParams;
+    }
+
+    private final Gson gson = new Gson();
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    public ResponseEntity<Object> getHoldings() {
+        logger.info("Fetching long term equity holdings.");
+        try {
+            if (!kiteUtility.hasTokens()) {
+                logger.error("Not authenticated. Please login first.");
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                        .body(java.util.Map.of("message", "Not authenticated. Please login first at /auth/login"));
+            }
+
+            KiteConnect kiteSdk = kiteUtility.getKiteSdk();
+            List<Holding> holdings = kiteSdk.getHoldings();
+            logger.info("Fetched {} holdings from Kite API.", holdings != null ? holdings.size() : 0);
+
+            // Roundtrip via Gson (used internally by Kite SDK, respects @SerializedName)
+            // -> Jackson, so DTO field mapping is driven by snake_case API contract,
+            // not by the SDK's Java field names (which differ across model classes).
+            String json = gson.toJson(holdings);
+            List<HoldingDto> dtos = objectMapper.readValue(
+                    json,
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, HoldingDto.class)
+            );
+            return ResponseEntity.ok(dtos);
+        } catch (KiteException ex) {
+            logger.error("KiteException while fetching holdings: {}", ex.getMessage(), ex);
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(java.util.Map.of("message", "Zerodha API error: " + ex.getMessage()));
+        } catch (IOException ex) {
+            logger.error("IOException while fetching holdings: {}", ex.getMessage(), ex);
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(java.util.Map.of("message", "Network error: " + ex.getMessage()));
+        } catch (Exception ex) {
+            logger.error("Unexpected error while fetching holdings: {}", ex.getMessage(), ex);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(java.util.Map.of("message", "Error: " + ex.getMessage()));
+        }
     }
 
     public HistoricalDataResponseDto getHistoricalData(HistoricalDataRequestDto request) {

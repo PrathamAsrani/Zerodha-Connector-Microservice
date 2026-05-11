@@ -34,3 +34,7 @@ build/
 
 /target
 /postman
+
+# Persisted Kite session tokens (contains access_token — never commit)
+/data/
+kite-token.json

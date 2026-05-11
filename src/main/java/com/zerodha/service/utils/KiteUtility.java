@@ -1,10 +1,12 @@
 package com.zerodha.service.utils;
 
+import com.zerodha.service.dtos.auth.StoredTokenDto;
+import com.zerodha.service.services.TokenStorageService;
 import com.zerodhatech.kiteconnect.KiteConnect;
 import jakarta.annotation.PostConstruct;
-import org.springframework.beans.factory.annotation.Value;
-import org.slf4j.LoggerFactory;
 import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -19,13 +21,34 @@ public class KiteUtility {
     @Value("${ZERODHA_API_KEY}")
     private String apiKey;
 
+    private final TokenStorageService tokenStorage;
+
     private static final Logger logger = LoggerFactory.getLogger(KiteUtility.class);
+
+    public KiteUtility(TokenStorageService tokenStorage) {
+        this.tokenStorage = tokenStorage;
+    }
 
     @PostConstruct
     public void init(){
         logger.info("Initializing KiteConnect with apiKey");
         kiteSdk = new KiteConnect(apiKey);
         logger.info("KiteConnect initialized");
+
+        // Restore tokens from local storage if present (in-process auto-login).
+        // Note: Kite access tokens expire daily ~06:00 IST, so a stale token will
+        // surface as a 403 on first API call and the user will need to re-login.
+        tokenStorage.load().ifPresent(this::applyStoredToken);
+    }
+
+    private void applyStoredToken(StoredTokenDto stored) {
+        logger.info("Restoring stored tokens for userId: {}", stored.getUserId());
+        this.currentUserId = stored.getUserId();
+        this.currentAccessToken = stored.getAccessToken();
+        this.currentPublicToken = stored.getPublicToken();
+        kiteSdk.setUserId(stored.getUserId());
+        kiteSdk.setAccessToken(stored.getAccessToken());
+        kiteSdk.setPublicToken(stored.getPublicToken());
     }
 
     /**
@@ -61,6 +84,9 @@ public class KiteUtility {
         kiteSdk.setAccessToken(accessToken);
         kiteSdk.setPublicToken(publicToken);
 
+        // Persist so the next process boot can resume without re-login.
+        tokenStorage.save(userId, accessToken, publicToken);
+
         logger.info("Tokens stored and set on KiteConnect SDK");
     }
 
@@ -72,6 +98,7 @@ public class KiteUtility {
         this.currentUserId = null;
         this.currentAccessToken = null;
         this.currentPublicToken = null;
+        tokenStorage.clear();
         logger.info("Tokens cleared");
     }
 
