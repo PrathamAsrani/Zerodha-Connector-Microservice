@@ -24,6 +24,31 @@ public class ZerodhaUserService {
         this.authService = authService;
     }
 
+    /**
+     * Returns the net cash currently available for placing orders on the
+     * given segment ("equity" or "commodity"). Returns 0.0 when tokens are
+     * missing, Kite fails, or the response can't be parsed — callers should
+     * treat 0.0 as "no funds, skip buying".
+     */
+    public double getNetMargin(String indicator) {
+        try {
+            KiteConnect sdk = kiteUtility.getKiteSdk();
+            if (sdk == null || sdk.getAccessToken() == null) return 0.0;
+            Margin m = sdk.getMargins(indicator);
+            if (m == null || m.net == null || m.net.isBlank()) return 0.0;
+            return Double.parseDouble(m.net.trim());
+        } catch (NumberFormatException ex) {
+            logger.warn("Could not parse {} net margin as double: {}", indicator, ex.getMessage());
+            return 0.0;
+        } catch (KiteException | java.io.IOException ex) {
+            logger.error("Failed to fetch {} net margin: {}", indicator, ex.getMessage(), ex);
+            return 0.0;
+        } catch (Exception ex) {
+            logger.error("Unexpected error fetching {} net margin: {}", indicator, ex.getMessage(), ex);
+            return 0.0;
+        }
+    }
+
     public ResponseEntity<Object> getUserMargins(String indicator){
         logger.info("started getUserMargins.");
         KiteConnect kiteSdk = kiteUtility.getKiteSdk();

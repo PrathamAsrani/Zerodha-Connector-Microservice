@@ -41,6 +41,7 @@ public class HoldingStrategyOrchestrator {
     private final GlobalExecutorService executor;
     private final MailService mailService;
     private final ZerodhaInvestService zerodhaInvestService;
+    private final ZerodhaUserService zerodhaUserService;
     private final TradeRepo tradeRepo;
     private final List<HoldingStrategy> strategies;
     private final String phoneNumber;
@@ -55,6 +56,7 @@ public class HoldingStrategyOrchestrator {
             GlobalExecutorService executor,
             MailService mailService,
             ZerodhaInvestService zerodhaInvestService,
+            ZerodhaUserService zerodhaUserService,
             TradeRepo tradeRepo,
             List<HoldingStrategy> strategies,
             @Value("${app.user.phone-number:}") String phoneNumber) {
@@ -63,6 +65,7 @@ public class HoldingStrategyOrchestrator {
         this.executor = executor;
         this.mailService = mailService;
         this.zerodhaInvestService = zerodhaInvestService;
+        this.zerodhaUserService = zerodhaUserService;
         this.tradeRepo = tradeRepo;
         this.strategies = strategies;
         this.phoneNumber = phoneNumber;
@@ -98,15 +101,19 @@ public class HoldingStrategyOrchestrator {
             logger.info("No cached holdings; skipping strategy fan-out for request {}.", requestId);
             return;
         }
+        // Snapshot the equity net margin once per tick so BUY strategies can size
+        // their orders. All per-symbol virtual threads share this snapshot.
+        double availableNet = zerodhaUserService.getNetMargin("equity");
+        logger.info("Tick {} margin snapshot: equity net = Rs {}", requestId, availableNet);
         for (CachedHolding h : holdings) {
             String threadName = requestId + "_" + h.tradingSymbol() + "_HOLDING";
-            Runnable task = MDCUtil.wrapWithMdc(() -> evaluateOne(h, requestId));
+            Runnable task = MDCUtil.wrapWithMdc(() -> evaluateOne(h, requestId, availableNet));
             executor.submitTask(threadName, task);
         }
         logger.info("Submitted {} per-holding strategy tasks for request {}.", holdings.size(), requestId);
     }
 
-    private void evaluateOne(CachedHolding holding, String requestId) {
+    private void evaluateOne(CachedHolding holding, String requestId, double availableNet) {
         double ltp;
         try {
             ScreenerLtpDto dto = scraper.fetchLtp(holding.tradingSymbol());
@@ -121,7 +128,7 @@ public class HoldingStrategyOrchestrator {
         }
 
         StrategyContext ctx = new StrategyContext(
-                holding, ltp, Instant.now(), requestId, phoneNumber);
+                holding, ltp, Instant.now(), requestId, phoneNumber, availableNet);
 
         for (HoldingStrategy strategy : strategies) {
             StrategyDecision decision;
@@ -138,7 +145,8 @@ public class HoldingStrategyOrchestrator {
     }
 
     private void executeTrade(StrategyContext ctx, StrategyDecision decision) {
-        String reservationKey = ctx.symbol() + "-" + decision.quantity() + "-success";
+        String reservationKey = ctx.symbol() + "-" + decision.transactionType()
+                + "-" + decision.quantity() + "-success";
         if (!holdingCacheService.tryReserve(reservationKey)) {
             logger.info("Skipping {} for {} qty {}: reservation key '{}' already held within TTL.",
                     decision.transactionType(), ctx.symbol(), decision.quantity(), reservationKey);
@@ -164,7 +172,10 @@ public class HoldingStrategyOrchestrator {
                 decision.strategyName()
         );
 
+        boolean isBuy = decision.transactionType() == TransactionEnum.BUY;
+
         String orderId = null;
+        boolean placed = false;
         try {
             ResponseEntity<OrderResponseDto> resp = zerodhaInvestService.placeOrder(req);
             if (resp != null && resp.getBody() != null) {
@@ -174,40 +185,55 @@ public class HoldingStrategyOrchestrator {
                 throw new IllegalStateException(
                         "placeOrder returned no orderId (status=" + (resp == null ? "null" : resp.getStatusCode()) + ")");
             }
+            placed = true;
             logger.info("Placed {} order id={} for {} qty={} @ Rs{} via {}",
                     decision.transactionType(), orderId, ctx.symbol(),
                     decision.quantity(), decision.price(), decision.strategyName());
         } catch (Exception ex) {
-            logger.error("Order placement failed for {} qty={} @ Rs{}: {}",
-                    ctx.symbol(), decision.quantity(), decision.price(), ex.getMessage(), ex);
+            logger.error("Order placement failed for {} {} qty={} @ Rs{}: {}",
+                    decision.transactionType(), ctx.symbol(),
+                    decision.quantity(), decision.price(), ex.getMessage(), ex);
             mailService.sendOrderFailureAlert(
-                    ctx.symbol(), decision.quantity(), decision.price(), ex.getMessage(), ctx.requestId());
-            return;
+                    ctx.symbol(), decision.transactionType().getCode(),
+                    decision.quantity(), decision.price(), ex.getMessage(), ctx.requestId());
         }
 
-        double profit = (decision.price() - ctx.holding().averagePrice()) * decision.quantity();
-        try {
-            tradeRepo.save(TradeEntity.builder()
-                    .tradingSymbol(ctx.symbol())
-                    .exchange(ctx.holding().exchange())
-                    .avgPrice(ctx.holding().averagePrice())
-                    .targetPrice(decision.price())
-                    .profit(profit)
-                    .quantity(decision.quantity())
-                    .tradeTime(Instant.now())
-                    .phoneNumber(ctx.phoneNumber())
-                    .transactionType(decision.transactionType())
-                    .strategyName(decision.strategyName())
-                    .orderId(orderId)
-                    .requestId(ctx.requestId())
-                    .build());
-        } catch (Exception ex) {
-            logger.error("Failed to persist TradeEntity for {} (orderId={}): {}",
-                    ctx.symbol(), orderId, ex.getMessage(), ex);
+        if (placed) {
+            double profit = (decision.price() - ctx.holding().averagePrice()) * decision.quantity();
+            try {
+                tradeRepo.save(TradeEntity.builder()
+                        .tradingSymbol(ctx.symbol())
+                        .exchange(ctx.holding().exchange())
+                        .avgPrice(ctx.holding().averagePrice())
+                        .targetPrice(decision.price())
+                        .profit(profit)
+                        .quantity(decision.quantity())
+                        .tradeTime(Instant.now())
+                        .phoneNumber(ctx.phoneNumber())
+                        .transactionType(decision.transactionType())
+                        .strategyName(decision.strategyName())
+                        .orderId(orderId)
+                        .requestId(ctx.requestId())
+                        .build());
+            } catch (Exception ex) {
+                logger.error("Failed to persist TradeEntity for {} (orderId={}): {}",
+                        ctx.symbol(), orderId, ex.getMessage(), ex);
+            }
         }
 
         if (decision.transactionType() == TransactionEnum.SELL) {
             mailService.sendSellTargetAlert(
+                    ctx.symbol(),
+                    decision.quantity(),
+                    ctx.holding().averagePrice(),
+                    ctx.ltp(),
+                    decision.price(),
+                    decision.strategyName(),
+                    orderId,
+                    ctx.requestId()
+            );
+        } else if (isBuy) {
+            mailService.sendBuyTargetAlert(
                     ctx.symbol(),
                     decision.quantity(),
                     ctx.holding().averagePrice(),

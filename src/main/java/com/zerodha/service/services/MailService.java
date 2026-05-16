@@ -76,6 +76,44 @@ public class MailService {
         sendHtml(subject, html);
     }
 
+    public void sendBuyTargetAlert(String symbol, int quantity, double avgPrice,
+                                   double ltp, double targetPrice, String strategyName,
+                                   String orderId, String requestId) {
+        double lossPct = ((avgPrice - ltp) / avgPrice) * 100.0;
+        double addedCost = targetPrice * quantity;
+        String subject = String.format(
+                "[ACTION] BUY %s @ -%.2f%% — target Rs %.2f (qty %d) [%s]",
+                symbol, lossPct, targetPrice, quantity, strategyName);
+
+        String html = """
+                <html><body style="font-family: -apple-system, Helvetica, Arial, sans-serif;">
+                <h2 style="color:#1f6feb; margin:0 0 12px 0;">BUY Triggered: %s</h2>
+                <p style="margin:0 0 8px 0;"><b>Strategy:</b> %s</p>
+                <p style="margin:0 0 8px 0;"><b>Order ID:</b> %s</p>
+                <table cellpadding="6" cellspacing="0" border="1" style="border-collapse:collapse; border-color:#ccc;">
+                  <tr><th align="left">Symbol</th><td>%s</td></tr>
+                  <tr><th align="left">Quantity</th><td>%d</td></tr>
+                  <tr><th align="left">Avg buy price</th><td>Rs %.2f</td></tr>
+                  <tr><th align="left">Current LTP</th><td>Rs %.2f</td></tr>
+                  <tr><th align="left">Target limit (LTP - discount)</th><td>Rs %.2f</td></tr>
+                  <tr><th align="left">Unrealised loss</th><td>-%.2f%%</td></tr>
+                  <tr><th align="left">Additional cost at target</th><td>Rs %.2f</td></tr>
+                </table>
+                <p style="margin-top:14px; color:#555;">
+                  Request: <code>%s</code><br/>
+                  Time: %s
+                </p>
+                </body></html>
+                """.formatted(
+                        symbol, strategyName, orderId == null ? "(pending / failed)" : orderId,
+                        symbol, quantity, avgPrice, ltp, targetPrice, lossPct, addedCost,
+                        requestId == null ? "(none)" : requestId,
+                        IST_TS.format(ZonedDateTime.now())
+                );
+
+        sendHtml(subject, html);
+    }
+
     public void sendStartupAlert(int holdingsCount, int strategyCount, String requestId) {
         String subject = String.format(
                 "[ALIVE] Zerodha service started — %d holdings, %d strategies online",
@@ -123,7 +161,13 @@ public class MailService {
 
     public void sendOrderFailureAlert(String symbol, int quantity, double price,
                                       String error, String requestId) {
-        String subject = String.format("[ALERT] SELL order FAILED for %s qty=%d", symbol, quantity);
+        sendOrderFailureAlert(symbol, null, quantity, price, error, requestId);
+    }
+
+    public void sendOrderFailureAlert(String symbol, String transactionType, int quantity, double price,
+                                      String error, String requestId) {
+        String txn = transactionType == null || transactionType.isBlank() ? "ORDER" : transactionType.toUpperCase();
+        String subject = String.format("[ALERT] %s order FAILED for %s qty=%d", txn, symbol, quantity);
         String html = """
                 <html><body style="font-family: -apple-system, Helvetica, Arial, sans-serif;">
                 <h3 style="color:#c0392b;">Order placement failed</h3>

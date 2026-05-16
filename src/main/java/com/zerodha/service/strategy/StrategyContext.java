@@ -14,7 +14,8 @@ public record StrategyContext(
         double ltp,
         Instant fetchedAt,
         String requestId,
-        String phoneNumber
+        String phoneNumber,
+        double availableNet
 ) {
     public String symbol() {
         return holding.tradingSymbol();
