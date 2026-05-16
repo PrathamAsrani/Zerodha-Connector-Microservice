@@ -7,6 +7,7 @@ import com.zerodha.service.model.StockLtpEntity;
 import com.zerodha.service.model.StockMasterEntity;
 import com.zerodha.service.repository.StockDailySummaryRepo;
 import com.zerodha.service.repository.StockLtpRepo;
+import com.zerodha.service.utils.MDCUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -41,6 +42,8 @@ public class StockDataSchedulerService {
     private static final String IST = "Asia/Kolkata";
 
     private final StockCacheService stockCacheService;
+    private final HoldingCacheService holdingCacheService;
+    private final HoldingStrategyOrchestrator holdingStrategyOrchestrator;
     private final StockLtpRepo stockLtpRepo;
     private final StockDailySummaryRepo stockDailySummaryRepo;
     private final ScreenerScraperService screenerScraperService;
@@ -55,12 +58,16 @@ public class StockDataSchedulerService {
 
     public StockDataSchedulerService(
             StockCacheService stockCacheService,
+            HoldingCacheService holdingCacheService,
+            HoldingStrategyOrchestrator holdingStrategyOrchestrator,
             StockLtpRepo stockLtpRepo,
             StockDailySummaryRepo stockDailySummaryRepo,
             ScreenerScraperService screenerScraperService,
             ConfigurableApplicationContext applicationContext,
             @Value("${stock.scheduler.exit-when-market-closed:true}") boolean exitWhenMarketClosed) {
         this.stockCacheService = stockCacheService;
+        this.holdingCacheService = holdingCacheService;
+        this.holdingStrategyOrchestrator = holdingStrategyOrchestrator;
         this.stockLtpRepo = stockLtpRepo;
         this.stockDailySummaryRepo = stockDailySummaryRepo;
         this.screenerScraperService = screenerScraperService;
@@ -93,21 +100,44 @@ public class StockDataSchedulerService {
             return;
         }
 
-        int index = nextTickIndex();
+        String requestId = MDCUtil.getShortId();
+        MDCUtil.setRequestId(requestId);
+        try {
+            int index = nextTickIndex();
+            logger.info("Tick {} started (requestId={}).", index, requestId);
 
-        if (index == 0) {
-            logger.info("First tick of the day (index 0). Warming stock cache.");
-            stockCacheService.reload();
-        } else if (!stockCacheService.isLoaded()) {
-            stockCacheService.loadIfNeeded();
+            if (index == 0) {
+                logger.info("First tick of the day (index 0). Warming stock + holdings caches.");
+                stockCacheService.reload();
+                holdingCacheService.reload();
+            } else {
+                if (!stockCacheService.isLoaded()) {
+                    stockCacheService.loadIfNeeded();
+                }
+                if (!holdingCacheService.isLoaded()) {
+                    holdingCacheService.reload();
+                }
+            }
+
+            List<StockMasterEntity> stocks = stockCacheService.getStocks();
+            if (stocks.isEmpty()) {
+                logger.debug("No active stocks in cache; skipping LTP fetch at tick {}.", index);
+            } else {
+                persistStockLtps(stocks, index);
+            }
+
+            // Heartbeat mail on the first tick after JVM boot (no-op afterwards).
+            holdingStrategyOrchestrator.sendStartupAlertOnce(requestId);
+
+            // Fan-out per-holding strategy evaluation on virtual threads. Each
+            // thread carries the same requestId via MDC for traceable logs.
+            holdingStrategyOrchestrator.runForAllHoldings(requestId);
+        } finally {
+            MDCUtil.clear();
         }
+    }
 
-        List<StockMasterEntity> stocks = stockCacheService.getStocks();
-        if (stocks.isEmpty()) {
-            logger.debug("No active stocks in cache; skipping LTP fetch at tick {}.", index);
-            return;
-        }
-
+    private void persistStockLtps(List<StockMasterEntity> stocks, int index) {
         Instant fetchedAt = Instant.now();
         List<StockLtpEntity> rows = new ArrayList<>(stocks.size());
         int failed = 0;
