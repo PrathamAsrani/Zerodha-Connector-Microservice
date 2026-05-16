@@ -1,0 +1,35 @@
+1] chmod +x mvnw
+2] ./mvnw clean package -DskipTests
+3] ls target
+4] sudo mkdir -p /opt/zerodha
+5] sudo cp target/*.jar /opt/zerodha/app.jar
+6] sudo nano /etc/systemd/system/zerodha.service
+7]
+[Unit]
+Description=Zerodha Connector Service
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/zerodha
+ExecStart=/usr/bin/java -jar /opt/zerodha/app.jar
+SuccessExitStatus=143
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
+8] Save:
+   CTRL + O
+   Enter
+   CTRL + X
+
+9] Start Service
+sudo systemctl daemon-reload
+sudo systemctl enable zerodha
+sudo systemctl start zerodha
+
+10] Check Logs
+sudo systemctl status zerodha
+sudo journalctl -u zerodha -f
