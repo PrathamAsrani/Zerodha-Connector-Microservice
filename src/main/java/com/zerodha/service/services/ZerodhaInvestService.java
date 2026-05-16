@@ -10,9 +10,13 @@ import com.zerodha.service.dtos.order.OrderRequestDto;
 import com.zerodha.service.dtos.order.OrderResponseDto;
 import com.zerodha.service.dtos.portfolio.HoldingDto;
 import com.zerodha.service.enums.ExchangeEnum;
+import com.zerodha.service.model.HoldingEntity;
+import com.zerodha.service.repository.HoldingRepo;
 import com.zerodha.service.utils.KiteUtility;
 import com.zerodhatech.kiteconnect.KiteConnect;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
+import com.zerodhatech.kiteconnect.kitehttp.exceptions.PermissionException;
+import com.zerodhatech.kiteconnect.kitehttp.exceptions.TokenException;
 import com.zerodhatech.models.HistoricalData;
 import com.zerodhatech.models.Holding;
 import com.zerodhatech.models.Instrument;
@@ -21,16 +25,19 @@ import com.zerodhatech.models.OrderParams;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import com.zerodha.service.enums.OrderEnum;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
@@ -44,7 +51,11 @@ import static com.zerodha.service.constants.MarketConstants.IS_MARKET_OPEN;
 public class ZerodhaInvestService {
     private final KiteUtility kiteUtility;
     private final OrderService orderService;
+    private final HoldingRepo holdingRepo;
     private final Logger logger = LoggerFactory.getLogger(ZerodhaInvestService.class);
+
+    @Value("${app.user.phone-number:9145495032}")
+    private String userPhoneNumber;
 
     // Cache for instruments to avoid repeated API calls
     private List<Instrument> instrumentsCache;
@@ -157,11 +168,29 @@ public class ZerodhaInvestService {
                     json,
                     objectMapper.getTypeFactory().constructCollectionType(List.class, HoldingDto.class)
             );
+
+            persistHoldings(dtos);
+
             return ResponseEntity.ok(dtos);
         } catch (KiteException ex) {
-            logger.error("KiteException while fetching holdings: {}", ex.getMessage(), ex);
+            // ex.getMessage() is often null; the useful detail is ex.code and the
+            // concrete subclass (TokenException = expired session, PermissionException = 403).
+            logger.error("KiteException while fetching holdings: code={} type={} msg={}",
+                    ex.code, ex.getClass().getSimpleName(), ex.message, ex);
+            if (ex instanceof TokenException || ex instanceof PermissionException || ex.code == 403) {
+                // Stored tokens are stale (Kite access tokens expire daily ~06:00 IST).
+                // Clear them so subsequent hasTokens() reflects reality.
+                kiteUtility.clearTokens();
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                        .body(java.util.Map.of(
+                                "message", "Session expired. Please login again at /auth/login",
+                                "code", ex.code));
+            }
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(java.util.Map.of("message", "Zerodha API error: " + ex.getMessage()));
+                    .body(java.util.Map.of(
+                            "message", "Zerodha API error",
+                            "code", ex.code,
+                            "detail", ex.message != null ? ex.message : ex.getClass().getSimpleName()));
         } catch (IOException ex) {
             logger.error("IOException while fetching holdings: {}", ex.getMessage(), ex);
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
@@ -170,6 +199,48 @@ public class ZerodhaInvestService {
             logger.error("Unexpected error while fetching holdings: {}", ex.getMessage(), ex);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(java.util.Map.of("message", "Error: " + ex.getMessage()));
+        }
+    }
+
+    private void persistHoldings(List<HoldingDto> dtos) {
+        if (dtos == null || dtos.isEmpty()) return;
+
+        String phone = (userPhoneNumber != null && !userPhoneNumber.isBlank())
+                ? userPhoneNumber
+                : kiteUtility.getCurrentUserId();
+        Instant fetchedAt = Instant.now();
+
+        List<HoldingEntity> rows = new ArrayList<>(dtos.size());
+        for (HoldingDto d : dtos) {
+            rows.add(HoldingEntity.builder()
+                    .phoneNumber(phone)
+                    .tradingSymbol(d.getTradingSymbol())
+                    .exchange(d.getExchange())
+                    .instrumentToken(d.getInstrumentToken())
+                    .isin(d.getIsin())
+                    .product(d.getProduct())
+                    .units(d.getQuantity())
+                    .usedQuantity(d.getUsedQuantity())
+                    .t1Quantity(d.getT1Quantity())
+                    .realisedQuantity(d.getRealisedQuantity())
+                    .authorisedQuantity(d.getAuthorisedQuantity())
+                    .openingQuantity(d.getOpeningQuantity())
+                    .collateralQuantity(d.getCollateralQuantity())
+                    .collateralType(d.getCollateralType())
+                    .averagePrice(d.getAveragePrice())
+                    .lastPrice(d.getLastPrice())
+                    .closePrice(d.getClosePrice())
+                    .pnl(d.getPnl())
+                    .dayChange(d.getDayChange())
+                    .dayChangePercentage(d.getDayChangePercentage())
+                    .fetchedAt(fetchedAt)
+                    .build());
+        }
+        try {
+            holdingRepo.saveAll(rows);
+            logger.info("Persisted {} holdings for phone={} at {}.", rows.size(), phone, fetchedAt);
+        } catch (Exception ex) {
+            logger.error("Failed to persist holdings snapshot: {}", ex.getMessage(), ex);
         }
     }
 

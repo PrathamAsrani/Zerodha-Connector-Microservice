@@ -26,15 +26,13 @@ import java.util.DoubleSummaryStatistics;
 import java.util.List;
 
 /**
- * Drives the per-minute LTP fetch and the 15:25 IST daily-summary roll-up.
+ * Drives the every-5-minute LTP fetch and the 15:30 IST daily-summary roll-up.
  *
- * Service lifecycle (deployed via GCP Cloud Scheduler at Mon-Fri 09:30 IST):
- *   1. ApplicationReadyEvent -> if market is closed, exit the JVM to save resources.
- *      If open, populate the in-memory stock cache once.
- *   2. Cron every minute Mon-Fri 09-15 IST -> scrape LTP per symbol from screener.in
- *      and persist each as a StockLtpEntity row with timestamp.
- *   3. Cron 15:25 IST Mon-Fri -> compute avg/min/max/last for the current day and
- *      upsert into stock_daily_summary.
+ * Each trading day the 5-min cron is invoked with a per-day tick index
+ * (0, 1, 2, ...) starting at 0 for the 09:30 IST run. The index resets when
+ * the IST calendar date changes. The index-0 tick is responsible for the
+ * "first run of the day" work — verifying the market is open and warming
+ * the in-memory StockMaster cache before any LTP scraping happens.
  */
 @Service
 public class StockDataSchedulerService {
@@ -48,6 +46,12 @@ public class StockDataSchedulerService {
     private final ScreenerScraperService screenerScraperService;
     private final ConfigurableApplicationContext applicationContext;
     private final boolean exitWhenMarketClosed;
+
+    @Value("${application.shutdown:false}")
+    private boolean shutdown;
+
+    private LocalDate currentTickDate;
+    private int tickIndex;
 
     public StockDataSchedulerService(
             StockCacheService stockCacheService,
@@ -67,8 +71,8 @@ public class StockDataSchedulerService {
     @EventListener(ApplicationReadyEvent.class)
     public void onApplicationReady() {
         if (!MarketConstants.IS_MARKET_OPEN()) {
-            logger.warn("Market is closed at startup. Exiting service to conserve resources.");
-            if (exitWhenMarketClosed) {
+            logger.warn("Market is closed at startup. Skipping cache load.");
+            if (exitWhenMarketClosed && shutdown) {
                 shutdownAsync();
             }
             return;
@@ -77,18 +81,30 @@ public class StockDataSchedulerService {
         stockCacheService.loadIfNeeded();
     }
 
-    @Scheduled(cron = "0 * 9-15 * * MON-FRI", zone = IST)
+    /**
+     * Every 5 minutes Mon-Fri between 09:30 and 15:30 IST. The cron is widened
+     * to 9-15 hour range; IS_MARKET_OPEN() filters out the 9:00-9:29 and
+     * 15:31-15:55 fringe minutes.
+     */
+    @Scheduled(cron = "0 0/5 9-15 * * MON-FRI", zone = IST)
     @Transactional
     public void fetchAndPersistLtp() {
         if (!MarketConstants.IS_MARKET_OPEN()) {
             return;
         }
-        if (!stockCacheService.isLoaded()) {
+
+        int index = nextTickIndex();
+
+        if (index == 0) {
+            logger.info("First tick of the day (index 0). Warming stock cache.");
+            stockCacheService.reload();
+        } else if (!stockCacheService.isLoaded()) {
             stockCacheService.loadIfNeeded();
         }
+
         List<StockMasterEntity> stocks = stockCacheService.getStocks();
         if (stocks.isEmpty()) {
-            logger.debug("No active stocks in cache; skipping LTP fetch.");
+            logger.debug("No active stocks in cache; skipping LTP fetch at tick {}.", index);
             return;
         }
 
@@ -119,10 +135,21 @@ public class StockDataSchedulerService {
         if (!rows.isEmpty()) {
             stockLtpRepo.saveAll(rows);
         }
-        logger.info("Persisted {} LTP rows at {} ({} failed).", rows.size(), fetchedAt, failed);
+        logger.info("Tick {} | persisted {} LTP rows at {} ({} failed).",
+                index, rows.size(), fetchedAt, failed);
     }
 
-    @Scheduled(cron = "0 25 15 * * MON-FRI", zone = IST)
+    private synchronized int nextTickIndex() {
+        LocalDate today = ZonedDateTime.now(MarketConstants.INDIA_ZONE).toLocalDate();
+        if (currentTickDate == null || !currentTickDate.equals(today)) {
+            currentTickDate = today;
+            tickIndex = 0;
+            return 0;
+        }
+        return ++tickIndex;
+    }
+
+    @Scheduled(cron = "0 30 15 * * MON-FRI", zone = IST)
     @Transactional
     public void updateDailySummary() {
         LocalDate today = ZonedDateTime.now(MarketConstants.INDIA_ZONE).toLocalDate();
