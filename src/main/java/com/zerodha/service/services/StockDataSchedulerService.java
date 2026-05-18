@@ -21,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.DoubleSummaryStatistics;
@@ -138,7 +139,7 @@ public class StockDataSchedulerService {
     }
 
     private void persistStockLtps(List<StockMasterEntity> stocks, int index) {
-        Instant fetchedAt = Instant.now();
+        Instant fetchedAt = ZonedDateTime.now(ZoneId.of("Asia/Kolkata")).toInstant();
         List<StockLtpEntity> rows = new ArrayList<>(stocks.size());
         int failed = 0;
 
