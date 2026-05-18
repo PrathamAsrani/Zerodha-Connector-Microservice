@@ -193,7 +193,7 @@ public class StockDataSchedulerService {
             return;
         }
 
-        Instant now = Instant.now();
+        Instant now = ZonedDateTime.now(ZoneId.of("Asia/Kolkata")).toInstant();
         int updated = 0;
         for (StockMasterEntity stock : stocks) {
             List<StockLtpEntity> ltps = stockLtpRepo
