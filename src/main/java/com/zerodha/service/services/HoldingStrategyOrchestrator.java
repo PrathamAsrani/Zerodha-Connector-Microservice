@@ -23,6 +23,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -49,6 +50,10 @@ public class HoldingStrategyOrchestrator {
     // One-shot guard: send the "service is alive" mail on the first cron tick
     // after JVM boot only. Reset across restarts, not across trading days.
     private volatile boolean startupAlertSent = false;
+
+    private static List<String> IGNORED_HOLDINGS = Arrays.asList(
+            "GOLDCASE"
+    );
 
     public HoldingStrategyOrchestrator(
             HoldingCacheService holdingCacheService,
@@ -106,6 +111,8 @@ public class HoldingStrategyOrchestrator {
         double availableNet = zerodhaUserService.getNetMargin("equity");
         logger.info("Tick {} margin snapshot: equity net = Rs {}", requestId, availableNet);
         for (CachedHolding h : holdings) {
+            if(IGNORED_HOLDINGS.contains(h.tradingSymbol()))
+                continue;
             String threadName = requestId + "_" + h.tradingSymbol() + "_HOLDING";
             Runnable task = MDCUtil.wrapWithMdc(() -> evaluateOne(h, requestId, availableNet));
             executor.submitTask(threadName, task);
