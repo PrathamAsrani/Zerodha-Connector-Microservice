@@ -104,6 +104,7 @@ public class HoldingStrategyOrchestrator {
         List<CachedHolding> holdings = holdingCacheService.getHoldings();
         if (holdings.isEmpty()) {
             logger.info("No cached holdings; skipping strategy fan-out for request {}.", requestId);
+            holdingCacheService.reload();
             return;
         }
         // Snapshot the equity net margin once per tick so BUY strategies can size
