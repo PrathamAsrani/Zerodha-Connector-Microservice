@@ -135,8 +135,9 @@ public class HoldingStrategyOrchestrator {
             return;
         }
 
+        ExchangeEnum exchange = parseExchange(holding.exchange());
         StrategyContext ctx = new StrategyContext(
-                holding, ltp, Instant.now(), requestId, phoneNumber, availableNet);
+                holding, exchange, ltp, Instant.now(), requestId, phoneNumber, availableNet);
 
         for (HoldingStrategy strategy : strategies) {
             StrategyDecision decision;
@@ -161,10 +162,9 @@ public class HoldingStrategyOrchestrator {
             return;
         }
 
-        ExchangeEnum exchangeEnum = parseExchange(ctx.holding().exchange());
         OrderRequestDto req = new OrderRequestDto(
                 ctx.symbol(),
-                exchangeEnum,
+                ctx.exchange(),
                 decision.transactionType(),
                 OrderEnum.LIMIT,
                 decision.quantity(),

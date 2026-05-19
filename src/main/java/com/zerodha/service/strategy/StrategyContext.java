@@ -1,5 +1,6 @@
 package com.zerodha.service.strategy;
 
+import com.zerodha.service.enums.ExchangeEnum;
 import com.zerodha.service.services.HoldingCacheService.CachedHolding;
 
 import java.time.Instant;
@@ -11,6 +12,7 @@ import java.time.Instant;
  */
 public record StrategyContext(
         CachedHolding holding,
+        ExchangeEnum exchange,
         double ltp,
         Instant fetchedAt,
         String requestId,

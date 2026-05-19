@@ -83,8 +83,7 @@ public class ZerodhaInvestService {
             OrderParams orderParams = getOrderParams(orderRequestDto);
             logger.info("Params set, Creating order.");
             Order order = kiteSdk.placeOrder(orderParams, orderRequestDto.variety.getCode());
-            logger.info("Order Placed!");
-            logger.info("order: " + order.toString());
+            logger.info("Order Placed! Kite SDK response: {}", gson.toJson(order));
 
             orderRequestDto.price = Double.parseDouble(order.averagePrice);
             boolean result = orderService.saveOrder(orderRequestDto, order.orderId);
@@ -97,15 +96,16 @@ public class ZerodhaInvestService {
             return ResponseEntity.ok(new OrderResponseDto(order.orderId));
         }
         catch (IOException ex) {
-            logger.error("IOException caught", ex);
+            logger.error("IOException caught on placeOrder: msg={}", ex.getMessage(), ex);
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
         }
         catch (KiteException ex) {
-            logger.error("KiteException caught", ex);
+            logger.error("KiteException caught on placeOrder: type={} code={} kiteMsg={} msg={}",
+                    ex.getClass().getSimpleName(), ex.code, ex.message, ex.getMessage(), ex);
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
         }
         catch (Exception ex){
-            logger.error("Exception caught", ex);
+            logger.error("Exception caught on placeOrder: msg={}", ex.getMessage(), ex);
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
         }
     }
