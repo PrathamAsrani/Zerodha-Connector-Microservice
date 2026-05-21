@@ -85,6 +85,20 @@ public class HoldingCacheService {
         return cache.get();
     }
 
+    /**
+     * Empties the holdings cache. The next cron tick sees an empty cache and
+     * triggers a fresh {@link #reload()} from Kite.
+     *
+     * @return number of holdings that were cached before clearing
+     */
+    public synchronized int clear() {
+        int size = cache.get().size();
+        cache.set(Collections.emptyList());
+        loaded = false;
+        logger.info("Holdings cache cleared ({} entries removed).", size);
+        return size;
+    }
+
     public boolean isLoaded() {
         return loaded;
     }

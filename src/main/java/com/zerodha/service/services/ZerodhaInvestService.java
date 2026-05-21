@@ -57,6 +57,9 @@ public class ZerodhaInvestService {
     @Value("${app.user.phone-number:9145495032}")
     private String userPhoneNumber;
 
+    // Kite Connect rejects orders whose tag exceeds 20 characters.
+    private static final int KITE_MAX_TAG_LENGTH = 20;
+
     // Cache for instruments to avoid repeated API calls
     private List<Instrument> instrumentsCache;
     private LocalDateTime instrumentsCacheTime;
@@ -124,7 +127,13 @@ public class ZerodhaInvestService {
         orderParams.exchange = orderRequestDto.exchange.getCode();
         orderParams.transactionType = orderRequestDto.transactionType.getCode();
         orderParams.validity = orderRequestDto.validity.getCode();
-        orderParams.tag = orderRequestDto.tag;
+        String tag = orderRequestDto.tag;
+        if (tag != null && tag.length() > KITE_MAX_TAG_LENGTH) {
+            logger.warn("Order tag '{}' exceeds Kite's {}-char limit; truncating.",
+                    tag, KITE_MAX_TAG_LENGTH);
+            tag = tag.substring(0, KITE_MAX_TAG_LENGTH);
+        }
+        orderParams.tag = tag;
         orderParams.disclosedQuantity = orderRequestDto.disclosedQuantity;
         orderParams.squareoff = orderRequestDto.squareoffValue;
         orderParams.stoploss = orderRequestDto.stoplossValue;

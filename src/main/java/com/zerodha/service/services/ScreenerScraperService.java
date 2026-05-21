@@ -62,6 +62,19 @@ public class ScreenerScraperService {
         return dto;
     }
 
+    /**
+     * Drops all cached last-price entries. The next {@link #fetchLtp(String)}
+     * for any symbol will re-scrape screener.in.
+     *
+     * @return number of entries that were cached before clearing
+     */
+    public int clearCache() {
+        int size = cache.size();
+        cache.clear();
+        logger.info("LTP scraper cache cleared ({} entries removed).", size);
+        return size;
+    }
+
     private ScreenerLtpDto scrape(String symbol, String url) throws IOException {
         logger.info("Scraping screener.in: {}", url);
 

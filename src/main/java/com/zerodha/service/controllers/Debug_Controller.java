@@ -1,11 +1,14 @@
 package com.zerodha.service.controllers;
 
+import com.zerodha.service.services.HoldingCacheService;
 import com.zerodha.service.services.HoldingStrategyOrchestrator;
 import com.zerodha.service.services.MailService;
+import com.zerodha.service.services.ScreenerScraperService;
 import com.zerodha.service.utils.MDCUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -25,6 +28,8 @@ public class Debug_Controller {
 
     private final MailService mailService;
     private final HoldingStrategyOrchestrator holdingStrategyOrchestrator;
+    private final HoldingCacheService holdingCacheService;
+    private final ScreenerScraperService screenerScraperService;
 
     /**
      * Fires the same "service is alive" mail the first cron tick would fire,
@@ -99,5 +104,21 @@ public class Debug_Controller {
     public ResponseEntity<Map<String, Object>> resetStartupGuard() {
         holdingStrategyOrchestrator.resetStartupAlertGuard();
         return ResponseEntity.ok(Map.of("status", "reset"));
+    }
+
+    /**
+     * Clears the holdings cache and the LTP scraper cache. The holdings cache
+     * reloads from Kite on the next cron tick; the LTP cache re-scrapes on the
+     * next fetch.
+     */
+    @DeleteMapping("/cache")
+    public ResponseEntity<Map<String, Object>> clearCaches() {
+        int holdings = holdingCacheService.clear();
+        int ltp = screenerScraperService.clearCache();
+        log.info("Caches cleared via debug endpoint: holdings={}, ltp={}", holdings, ltp);
+        return ResponseEntity.ok(Map.of(
+                "status", "cleared",
+                "holdingsCacheEntriesRemoved", holdings,
+                "ltpCacheEntriesRemoved", ltp));
     }
 }
