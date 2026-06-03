@@ -1,5 +1,7 @@
 package com.zerodha.service.services;
 
+import com.zerodha.service.constants.MarketConstants;
+import com.zerodha.service.enums.TransactionEnum;
 import com.zerodha.service.model.OrderEntity;
 import com.zerodha.service.dtos.order.OrderRequestDto;
 import com.zerodha.service.repository.OrderRepo;
@@ -13,6 +15,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZonedDateTime;
 
 @Service
 public class OrderService {
@@ -42,6 +46,18 @@ public class OrderService {
             logger.error("Unexcpected error while fetching the orders" + ex.getMessage());
         }
         return null;
+    }
+
+    /**
+     * Returns true if an order for the same tradingsymbol and transaction type (BUY/SELL)
+     * has already been placed today (IST). Used to avoid placing duplicate orders.
+     */
+    public boolean orderExistsToday(String tradingsymbol, TransactionEnum transactionType){
+        LocalDate today = ZonedDateTime.now(MarketConstants.INDIA_ZONE).toLocalDate();
+        Instant startOfDay = today.atStartOfDay(MarketConstants.INDIA_ZONE).toInstant();
+        Instant startOfNextDay = today.plusDays(1).atStartOfDay(MarketConstants.INDIA_ZONE).toInstant();
+        return orderRepo.existsByTradingsymbolAndTransactionTypeAndPlacedAtBetween(
+                tradingsymbol, transactionType, startOfDay, startOfNextDay);
     }
 
     public boolean saveOrder(OrderRequestDto orderRequestDto , String orderId){

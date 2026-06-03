@@ -80,6 +80,15 @@ public class ZerodhaInvestService {
                         .body(new OrderResponseDto("Not authenticated. Please login first."));
             }
 
+            // Skip if a same-side order for this commodity was already placed today (IST).
+            if (orderService.orderExistsToday(orderRequestDto.tradingsymbol, orderRequestDto.transactionType)) {
+                logger.warn("Duplicate order skipped: a {} order for {} already placed today.",
+                        orderRequestDto.transactionType, orderRequestDto.tradingsymbol);
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(new OrderResponseDto("Duplicate order: a " + orderRequestDto.transactionType
+                                + " order for " + orderRequestDto.tradingsymbol + " already placed today."));
+            }
+
             KiteConnect kiteSdk = kiteUtility.getKiteSdk();
             logger.info("KiteSdk got with tokens");
 
@@ -88,7 +97,12 @@ public class ZerodhaInvestService {
             Order order = kiteSdk.placeOrder(orderParams, orderRequestDto.variety.getCode());
             logger.info("Order Placed! Kite SDK response: {}", gson.toJson(order));
 
-            orderRequestDto.price = Double.parseDouble(order.averagePrice);
+            // Kite's placeOrder response only returns the order id; averagePrice is null
+            // until the order is actually filled. Only use it when present, otherwise keep
+            // the requested price so we still persist the order.
+            if (order.averagePrice != null && !order.averagePrice.isBlank()) {
+                orderRequestDto.price = Double.parseDouble(order.averagePrice);
+            }
             boolean result = orderService.saveOrder(orderRequestDto, order.orderId);
 
             if(result)
