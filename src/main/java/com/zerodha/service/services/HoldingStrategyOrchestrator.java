@@ -24,7 +24,11 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Per-tick fan-out: one virtual thread per cached holding. Each thread scrapes
@@ -66,6 +70,7 @@ public class HoldingStrategyOrchestrator {
             PortfolioAllocationService portfolioAllocationService,
             TradeRepo tradeRepo,
             List<HoldingStrategy> strategies,
+            @Value("${ALLOWED_STRATEGIES:}") String allowedStrategies,
             @Value("${app.user.phone-number:}") String phoneNumber) {
         this.holdingCacheService = holdingCacheService;
         this.scraper = scraper;
@@ -75,10 +80,43 @@ public class HoldingStrategyOrchestrator {
         this.zerodhaUserService = zerodhaUserService;
         this.portfolioAllocationService = portfolioAllocationService;
         this.tradeRepo = tradeRepo;
-        this.strategies = strategies;
+        this.strategies = filterAllowed(strategies, allowedStrategies);
         this.phoneNumber = phoneNumber;
-        logger.info("HoldingStrategyOrchestrator loaded with {} strategies: {}",
-                strategies.size(), strategies.stream().map(HoldingStrategy::name).toList());
+        logger.info("HoldingStrategyOrchestrator loaded with {} strategies: {} (allowed filter: '{}', {} registered)",
+                this.strategies.size(), this.strategies.stream().map(HoldingStrategy::name).toList(),
+                allowedStrategies, strategies.size());
+    }
+
+    /**
+     * Keep only the strategies whose {@link HoldingStrategy#name()} is listed in
+     * the comma-separated {@code ALLOWED_STRATEGIES} property. A blank/empty
+     * filter allows every registered strategy. Names are matched case-insensitively
+     * after trimming. A configured name with no matching registered strategy is
+     * logged so typos in the property surface at boot.
+     */
+    private static List<HoldingStrategy> filterAllowed(List<HoldingStrategy> strategies, String allowedStrategies) {
+        if (allowedStrategies == null || allowedStrategies.isBlank()) {
+            return List.copyOf(strategies);
+        }
+        Set<String> allowed = Arrays.stream(allowedStrategies.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(s -> s.toUpperCase(Locale.ROOT))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        List<HoldingStrategy> filtered = strategies.stream()
+                .filter(s -> allowed.contains(s.name().toUpperCase(Locale.ROOT)))
+                .toList();
+
+        Set<String> registeredNames = strategies.stream()
+                .map(s -> s.name().toUpperCase(Locale.ROOT))
+                .collect(Collectors.toSet());
+        allowed.stream()
+                .filter(name -> !registeredNames.contains(name))
+                .forEach(name -> logger.warn(
+                        "ALLOWED_STRATEGIES lists '{}' but no registered HoldingStrategy has that name; ignoring.", name));
+
+        return filtered;
     }
 
     /**
