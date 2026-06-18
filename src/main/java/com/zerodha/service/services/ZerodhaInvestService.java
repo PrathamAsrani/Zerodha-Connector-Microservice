@@ -10,6 +10,9 @@ import com.zerodha.service.dtos.order.OrderRequestDto;
 import com.zerodha.service.dtos.order.OrderResponseDto;
 import com.zerodha.service.dtos.portfolio.HoldingDto;
 import com.zerodha.service.enums.ExchangeEnum;
+import com.zerodha.service.enums.TransactionEnum;
+import com.zerodha.service.enums.ValidityEnum;
+import com.zerodha.service.enums.VarietyEnum;
 import com.zerodha.service.model.HoldingEntity;
 import com.zerodha.service.repository.HoldingRepo;
 import com.zerodha.service.utils.KiteUtility;
@@ -52,6 +55,7 @@ public class ZerodhaInvestService {
     private final KiteUtility kiteUtility;
     private final OrderService orderService;
     private final HoldingRepo holdingRepo;
+    private final PortfolioAllocationService portfolioAllocationService;
     private final Logger logger = LoggerFactory.getLogger(ZerodhaInvestService.class);
 
     @Value("${app.user.phone-number:9145495032}")
@@ -89,26 +93,51 @@ public class ZerodhaInvestService {
                                 + " order for " + orderRequestDto.tradingsymbol + " already placed today."));
             }
 
+            // Concentration guard: never let a single stock exceed the configured
+            // fraction (default 30%, DB-overridable) of total portfolio value on BUYs.
+            if (orderRequestDto.transactionType == TransactionEnum.BUY) {
+                double buyValue = orderRequestDto.price * orderRequestDto.quantity;
+                if (!portfolioAllocationService.isBuyWithinAllocationLimit(
+                        orderRequestDto.tradingsymbol, buyValue)) {
+                    logger.warn("BUY blocked by allocation cap: {} qty={} @ Rs{} (value Rs{}) would breach per-stock limit.",
+                            orderRequestDto.tradingsymbol, orderRequestDto.quantity,
+                            orderRequestDto.price, buyValue);
+                    return ResponseEntity.status(HttpStatus.CONFLICT)
+                            .body(new OrderResponseDto());
+                }
+            }
+
             KiteConnect kiteSdk = kiteUtility.getKiteSdk();
             logger.info("KiteSdk got with tokens");
 
             OrderParams orderParams = getOrderParams(orderRequestDto);
+            VarietyEnum variety = orderRequestDto.variety != null
+                    ? orderRequestDto.variety : VarietyEnum.REGULAR;
             logger.info("Params set, Creating order.");
-            Order order = kiteSdk.placeOrder(orderParams, orderRequestDto.variety.getCode());
+            Order order = kiteSdk.placeOrder(orderParams, variety.getCode());
             logger.info("Order Placed! Kite SDK response: {}", gson.toJson(order));
 
-            // Kite's placeOrder response only returns the order id; averagePrice is null
-            // until the order is actually filled. Only use it when present, otherwise keep
-            // the requested price so we still persist the order.
-            if (order.averagePrice != null && !order.averagePrice.isBlank()) {
-                orderRequestDto.price = Double.parseDouble(order.averagePrice);
+            // Kite's place-order endpoint returns ONLY the order_id (see
+            // https://kite.trade/docs/connect/v3/orders/#placing-orders). Every other
+            // field — average_price, price, status, quantity, ... — is null/0 here and
+            // is populated later via the orders/postbacks APIs. So rely solely on
+            // order_id and keep the requested LIMIT price for persistence; never parse
+            // the (null) average_price, which previously NPE'd AFTER a live order.
+            if (order == null || order.orderId == null || order.orderId.isBlank()) {
+                logger.error("Kite returned no order_id; treating placement as failed. response={}",
+                        gson.toJson(order));
+                return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                        .body(new OrderResponseDto());
             }
-            boolean result = orderService.saveOrder(orderRequestDto, order.orderId);
 
+            boolean result = orderService.saveOrder(orderRequestDto, order.orderId);
             if(result)
                 logger.info("Order saved in DB");
             else
                 logger.info("Failed to save in DB");
+
+            // Recompute the portfolio snapshot so the next BUY sees the new position.
+            portfolioAllocationService.refreshQuietly();
 
             return ResponseEntity.ok(new OrderResponseDto(order.orderId));
         }
@@ -130,17 +159,21 @@ public class ZerodhaInvestService {
     private OrderParams getOrderParams(OrderRequestDto orderRequestDto){
         OrderParams orderParams = new OrderParams();
         logger.info("Setting params");
-        if(orderRequestDto.orderType == null || orderRequestDto.orderType != OrderEnum.MARKET) {
+        // This service only ever places LIMIT orders; default defensively so a
+        // null/odd orderType can never NPE on getCode() below.
+        OrderEnum orderType = orderRequestDto.orderType != null ? orderRequestDto.orderType : OrderEnum.LIMIT;
+        if(orderType != OrderEnum.MARKET) {
             orderParams.price = orderRequestDto.price;
             orderParams.triggerPrice = orderRequestDto.triggerPrice;
         }
         orderParams.quantity = orderRequestDto.quantity;
-        orderParams.orderType = orderRequestDto.orderType.getCode();
+        orderParams.orderType = orderType.getCode();
         orderParams.tradingsymbol = orderRequestDto.tradingsymbol;
         orderParams.product = orderRequestDto.product.getCode();
         orderParams.exchange = orderRequestDto.exchange.getCode();
         orderParams.transactionType = orderRequestDto.transactionType.getCode();
-        orderParams.validity = orderRequestDto.validity.getCode();
+        orderParams.validity = orderRequestDto.validity != null
+                ? orderRequestDto.validity.getCode() : ValidityEnum.DAY.getCode();
         String tag = orderRequestDto.tag;
         if (tag != null && tag.length() > KITE_MAX_TAG_LENGTH) {
             logger.warn("Order tag '{}' exceeds Kite's {}-char limit; truncating.",

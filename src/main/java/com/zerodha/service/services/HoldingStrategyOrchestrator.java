@@ -43,6 +43,7 @@ public class HoldingStrategyOrchestrator {
     private final MailService mailService;
     private final ZerodhaInvestService zerodhaInvestService;
     private final ZerodhaUserService zerodhaUserService;
+    private final PortfolioAllocationService portfolioAllocationService;
     private final TradeRepo tradeRepo;
     private final List<HoldingStrategy> strategies;
     private final String phoneNumber;
@@ -62,6 +63,7 @@ public class HoldingStrategyOrchestrator {
             MailService mailService,
             ZerodhaInvestService zerodhaInvestService,
             ZerodhaUserService zerodhaUserService,
+            PortfolioAllocationService portfolioAllocationService,
             TradeRepo tradeRepo,
             List<HoldingStrategy> strategies,
             @Value("${app.user.phone-number:}") String phoneNumber) {
@@ -71,6 +73,7 @@ public class HoldingStrategyOrchestrator {
         this.mailService = mailService;
         this.zerodhaInvestService = zerodhaInvestService;
         this.zerodhaUserService = zerodhaUserService;
+        this.portfolioAllocationService = portfolioAllocationService;
         this.tradeRepo = tradeRepo;
         this.strategies = strategies;
         this.phoneNumber = phoneNumber;
@@ -154,6 +157,20 @@ public class HoldingStrategyOrchestrator {
     }
 
     private void executeTrade(StrategyContext ctx, StrategyDecision decision) {
+        boolean isBuy = decision.transactionType() == TransactionEnum.BUY;
+
+        // Per-stock concentration guard. Pre-check here so a blocked BUY skips
+        // quietly (no order, no reservation, no "FAILED" alert). placeOrder() also
+        // enforces this as a backstop for the direct controller path.
+        if (isBuy) {
+            double buyValue = decision.price() * decision.quantity();
+            if (!portfolioAllocationService.isBuyWithinAllocationLimit(ctx.symbol(), buyValue)) {
+                logger.info("Skipping BUY for {} qty {} @ Rs{}: per-stock allocation cap reached.",
+                        ctx.symbol(), decision.quantity(), decision.price());
+                return;
+            }
+        }
+
         String reservationKey = ctx.symbol() + "-" + decision.transactionType()
                 + "-" + decision.quantity() + "-success";
         if (!holdingCacheService.tryReserve(reservationKey)) {
@@ -179,8 +196,6 @@ public class HoldingStrategyOrchestrator {
                 VarietyEnum.REGULAR,
                 decision.strategyName()
         );
-
-        boolean isBuy = decision.transactionType() == TransactionEnum.BUY;
 
         String orderId = null;
         boolean placed = false;
